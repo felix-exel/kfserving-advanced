@@ -1,0 +1,20 @@
+apiVersion: serving.kubeflow.org/v1beta1
+kind: InferenceService
+metadata:
+  namespace: kfserving-test
+  name: autoencoder-recommender
+spec:
+  transformer:
+        containers:
+        - image: registry.gitlab.com/felix.exel/ci_cd_kubernetes/kfserving/outlier-detection-transformer:latest
+          name: user-container
+          imagePullPolicy: Always
+        imagePullSecrets:
+          - name: gitlab
+
+  predictor:
+    serviceAccountName: "sa" # service account for aws credentials
+    minReplicas: 1 # if 0: replica will scale down to 0 when there are no requests
+    tensorflow:
+      runtimeVersion: "2.4.0" #TensorFlow Serving Version
+      storageUri: "s3://bucket-fex/autoencoder_recommender/" # subfolder must contain numbers only for tf serving

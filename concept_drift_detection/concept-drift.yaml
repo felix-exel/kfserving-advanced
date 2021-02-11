@@ -1,0 +1,18 @@
+apiVersion: serving.kubeflow.org/v1beta1
+kind: InferenceService
+metadata:
+  namespace: kfserving-test
+  name: concept-drift
+spec:
+  predictor:
+    maxReplicas: 1 # Concept Drift gathers all batches in one instance (pod) so it cannot be replicated
+    minReplicas: 1 # if 0: replica will scale down to 0 when there are no requests
+    containers:
+    - image: registry.gitlab.com/felix.exel/ci_cd_kubernetes/kfserving/cd
+      name: user-container
+      imagePullPolicy: Always
+      ports:
+        - containerPort: 8080
+          protocol: TCP
+    imagePullSecrets:
+      - name: gitlab

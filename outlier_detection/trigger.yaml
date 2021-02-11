@@ -1,0 +1,12 @@
+apiVersion: eventing.knative.dev/v1
+kind: Trigger
+metadata:
+  name: outlier-trigger
+  namespace: kfserving-test
+spec:
+  broker: product-recommender
+  filter:
+    attributes:
+      type: org.kubeflow.serving.inference.request
+  subscriber:
+    uri: http://autoencoder-recommender-transformer-default.kfserving-test/v1/models/autoencoder-recommender:predict

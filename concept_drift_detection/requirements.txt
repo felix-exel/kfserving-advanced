@@ -1,0 +1,5 @@
+numpy == 1.19.5
+tensorflow == 2.4.0
+jupyter
+alibi-detect==0.4.4
+watermark == 2.0.2
