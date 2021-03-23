@@ -8,7 +8,7 @@ spec:
     maxReplicas: 1 # Concept Drift gathers all batches in one instance (pod) so it cannot be replicated
     minReplicas: 1 # if 0: replica will scale down to 0 when there are no requests
     containers:
-    - image: registry.gitlab.com/felix.exel/ci_cd_kubernetes/kfserving/cd
+    - image: registry.gitlab.com/felix.exel/container_registry/kfserving/concept-drift-detection
       name: user-container
       imagePullPolicy: Always
       ports:

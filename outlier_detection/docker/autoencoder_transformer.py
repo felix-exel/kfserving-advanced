@@ -1,6 +1,5 @@
-import tensorflow as tf
+from tensorflow.keras.losses import SparseCategoricalCrossentropy
 import json
-import tornado
 from typing import Dict
 import requests
 import logging
@@ -44,7 +43,7 @@ class AutoencoderTransformer(kfserving.KFModel):
         logging.info("TIMEOUT URL %s", self.timeout)
         self.mask = None
         self.y_true = None
-        self.sparse_cat_loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=False, reduction='sum')
+        self.sparse_cat_loss = SparseCategoricalCrossentropy(from_logits=False, reduction='sum')
         # influxDB Client
         self.client = InfluxDBClient(host=influx_host, port=influx_port)
         self.client.switch_database(database)
@@ -75,9 +74,20 @@ class AutoencoderTransformer(kfserving.KFModel):
         """
         # logging.info("Preprocessing Inputs %s", inputs)
         np_array = np.array(inputs['instances'])
-        self.y_true = np_array[:, :, :1]
-        self.mask = np_array[:, :, 0] != 0  # (batch_size, window_length)
-        return inputs
+        list_ground_truth = inputs['id']  # list of ground truths per batch
+
+        # Pad
+        padded = np.zeros((np_array.shape[0], 31, 1), dtype=np.float32)  # (batch_size, window_length, n_features)
+        padded[:, :np_array.shape[1], :1] = np_array[:, :, :1]
+        # Insert Ground Truth
+        for batch in range(padded.shape[0]):
+            id_to_insert = np.where(padded[batch, :, :1] == 0)[0][0]
+            padded[batch, id_to_insert, :1] = list_ground_truth[batch]
+
+        self.y_true = padded
+        self.mask = padded[:, :, 0] != 0  # (batch_size, window_length)
+
+        return {'instances': self.y_true.tolist()}
 
     def postprocess(self, request: Dict) -> Dict:
         """Post process function of TFServing on the KFServing side is
@@ -89,7 +99,8 @@ class AutoencoderTransformer(kfserving.KFModel):
         Returns:
             :param request: Dict: Returns the request input after converting it into a tensor
         """
-        y_pred = np.array(request['predictions'])  # (batch_size, window_length, n_classes)
+        # logging.info(f"Postprocess: {request}")
+        y_pred = np.array(request['predictions'])  # (batch_size, n_classes)
 
         lengths_session = self.mask.sum(axis=1)
         losses = np.empty_like(lengths_session, dtype=np.float64)
@@ -105,7 +116,7 @@ class AutoencoderTransformer(kfserving.KFModel):
 
         mean_losses = losses / lengths_session
         logging.info("Mean Loss %s", mean_losses)
-        logging.info("Total Loss %s", losses)
+        # logging.info("Total Loss %s", losses)
 
         response_dict = {'loss': losses.tolist(), 'mean_loss': mean_losses.tolist(), 'is_outlier': []}
         for mean_loss in response_dict['mean_loss']:

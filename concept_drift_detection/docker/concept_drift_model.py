@@ -38,7 +38,7 @@ class ConceptDriftModel(kfserving.KFModel):
         self.timeout = 999999999999
         logging.info("TIMEOUT URL %s", self.timeout)
         self.name = name
-        self.batch_size = 1000
+        self.batch_size = 100
         self.batches = None
         self.model = None
         # influxDB Client
@@ -55,11 +55,13 @@ class ConceptDriftModel(kfserving.KFModel):
         if self.batches.shape[0] >= self.batch_size:
             preds_ood = self.model.predict(self.batches, return_p_val=True)
             logging.info("Drift %s", preds_ood['data']['is_drift'])
-            thread_push_2_es = threading.Thread(target=self.push_conceptdrift_2_influx,
-                                                args=[preds_ood['data']['is_drift']])
-            thread_push_2_es.start()
+            thread_push_2_influx = threading.Thread(target=self.push_conceptdrift_2_influx,
+                                                    args=[preds_ood['data']['is_drift']])
+            thread_push_2_influx.start()
             self.batches = None
 
+            preds_ood['data']['distance'] = preds_ood['data']['distance'].tolist()
+            preds_ood['data']['p_val'] = preds_ood['data']['p_val'].tolist()
         else:
             preds_ood = {}
         return preds_ood
@@ -74,11 +76,19 @@ class ConceptDriftModel(kfserving.KFModel):
             Dict: Returns the request input after converting it into a tensor
         """
         np_array = np.array(inputs['instances'])  # (batch_size, window_length, 52)
+        list_ground_truth = inputs['id']
+        # Pad
+        padded = np.zeros((np_array.shape[0], 31, 1), dtype=np.float32)  # (batch_size, window_length, n_features)
+        padded[:, :np_array.shape[1], :1] = np_array[:, :, :1]
+        # Insert Ground Truth
+        for batch in range(padded.shape[0]):
+            id_to_insert = np.where(padded[batch, :, :1] == 0)[0][0]
+            padded[batch, id_to_insert, :1] = list_ground_truth[batch]
 
         if self.batches is None:
-            self.batches = np_array[:, :, :1]
+            self.batches = padded[:, :, :1]
         else:
-            self.batches = np.concatenate([self.batches, np_array[:, :, :1]], axis=0)
+            self.batches = np.concatenate([self.batches, padded[:, :, :1]], axis=0)
 
         return inputs
 

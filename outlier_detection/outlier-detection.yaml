@@ -6,7 +6,7 @@ metadata:
 spec:
   transformer:
         containers:
-        - image: registry.gitlab.com/felix.exel/ci_cd_kubernetes/kfserving/outlier-detection-transformer:latest
+        - image: registry.gitlab.com/felix.exel/container_registry/kfserving/outlier-detection
           name: user-container
           imagePullPolicy: Always
         imagePullSecrets:
@@ -17,4 +17,9 @@ spec:
     minReplicas: 1 # if 0: replica will scale down to 0 when there are no requests
     tensorflow:
       runtimeVersion: "2.4.0" #TensorFlow Serving Version
-      storageUri: "s3://bucket-fex/autoencoder_recommender/" # subfolder must contain numbers only for tf serving
+      storageUri: "s3://bucket-fex/autoencoder_recommender/d052e637a7314c14a092585baf512672/" # subfolder must contain numbers only for tf serving
+      resources:
+        limits:
+          cpu: "3" # cloud: 3, local 8
+        requests:
+          cpu: "1" # cloud: 1, local 2

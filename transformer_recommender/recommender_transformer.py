@@ -1,6 +1,9 @@
 from typing import Dict
 import logging
+import requests
 import kfserving
+import os
+import json
 import numpy as np
 import threading
 from influxdb import InfluxDBClient
@@ -39,8 +42,12 @@ class RecommenderTransformer(kfserving.KFModel):
         logging.info("TIMEOUT URL %s", self.timeout)
         self.item_ground_truth = None
         # influxDB Client
+        self.database = database
         self.client = InfluxDBClient(host=influx_host, port=influx_port)
+        self.create_influx_database()
         self.client.switch_database(database)
+        # Grafana Datasource and Dashboard Import
+        self.create_grafana_datasource_dashboard(influx_host, influx_port)
 
     def preprocess(self, inputs: Dict) -> Dict:
         """Pre-process activity of the Session Input data.
@@ -64,26 +71,29 @@ class RecommenderTransformer(kfserving.KFModel):
         Returns:
             :param request: Dict: Returns the request input after converting it into a tensor
         """
-        y_pred = np.array(request['predictions'])  # (batch_size, window_length, n_classes)
-        item_pred = y_pred.argsort()[0][::-1][0]
+        y_pred = np.array(request['predictions'])  # (batch_size, n_classes)
+        item_pred = y_pred.argsort()[:, ::-1][:, 0]  # (batches)
+
         thread = threading.Thread(target=self.calculate_push_metrics, args=[item_pred])
         thread.start()
+        request['id'] = self.item_ground_truth
         return request
 
-    def calculate_push_metrics(self, item_pred: int):
-        self.push_prediction_2_influx(int(item_pred), int(self.item_ground_truth))
-        # get all predictions and ground truths
-        query = "select * from model_predictions"
-        res = self.client.query(query)
-        list_res = list(res)[0]
-        pred_list = [list_res[i]['prediction'] for i in range(len(list_res))]
-        y_true_list = [list_res[i]['ground_truth'] for i in range(len(list_res))]
-        logging.info("Predictions: %s", pred_list)
-        logging.info("Ground Truth: %s", y_true_list)
-        self.push_metrics_2_influx(float(accuracy_score(y_true_list, pred_list, normalize=True)),
-                                   float(precision_score(y_true_list, pred_list, average='macro', zero_division=1)),
-                                   float(recall_score(y_true_list, pred_list, average='macro', zero_division=1)),
-                                   float(f1_score(y_true_list, pred_list, average='macro', zero_division=1)))
+    def calculate_push_metrics(self, item_pred: np.ndarray):
+        for batch in range(item_pred.shape[0]):
+            self.push_prediction_2_influx(int(item_pred[batch]), int(self.item_ground_truth[batch]))
+            # get all predictions and ground truths
+            query = "select * from model_predictions"
+            res = self.client.query(query)
+            list_res = list(res)[0]
+            pred_list = [list_res[i]['prediction'] for i in range(len(list_res))]
+            y_true_list = [list_res[i]['ground_truth'] for i in range(len(list_res))]
+            logging.info("Predictions: %s", pred_list)
+            logging.info("Ground Truth: %s", y_true_list)
+            self.push_metrics_2_influx(float(accuracy_score(y_true_list, pred_list, normalize=True)),
+                                       float(precision_score(y_true_list, pred_list, average='macro', zero_division=1)),
+                                       float(recall_score(y_true_list, pred_list, average='macro', zero_division=1)),
+                                       float(f1_score(y_true_list, pred_list, average='macro', zero_division=1)))
 
     def push_prediction_2_influx(self, prediction: int, ground_truth: int):
         json_body = [{
@@ -127,6 +137,64 @@ class RecommenderTransformer(kfserving.KFModel):
                 logging.info("Created Index %s", index_name)
             else:
                 logging.error("Could not create Index %s", index_name)
+
+    def create_influx_database(self):
+        databases = self.client.get_list_database()
+        for db in databases:
+            if db['name'] == self.database:
+                return
+        self.client.create_database(self.database)
+        logging.info(f"Created InfluxDB {self.database} Database!")
+
+    def create_grafana_datasource_dashboard(self, influx_host, influx_port):
+        grafana_user = 'admin'
+        grafana_password = 'admin'
+        grafana_host = 'grafana.knative-monitoring.svc.cluster.local'
+        grafana_port = 30802
+        grafana_url = os.path.join('http://', '%s:%u' % (grafana_host, grafana_port))
+        session = requests.Session()
+        login_post = session.post(
+            os.path.join(grafana_url, 'login'),
+            data=json.dumps({
+                'user': grafana_user,
+                'email': '',
+                'password': grafana_password}),
+            headers={'content-type': 'application/json'})
+
+        # Get list of datasources
+        datasources_get = session.get(os.path.join(grafana_url, 'api', 'datasources'))
+        datasources = datasources_get.json()
+        for datasource in datasources:
+            if datasource['name'] == 'InfluxDB':
+                return
+
+        # Add new datasource
+        datasources_post = session.post(
+            os.path.join(grafana_url, 'api', 'datasources'),
+            data=json.dumps({
+                'access': 'proxy',
+                'database': self.database,
+                'name': 'InfluxDB',
+                'type': 'influxdb',
+                'url': 'http://%s:%u' % (influx_host, influx_port)
+            }),
+            headers={'content-type': 'application/json'})
+        logging.info(f"Created Grafana Datasource")
+
+        # Import Dashboard
+        # appended id = null to the json
+        with open('Model Performance-1612430487867.json') as f:
+            dashboard = json.load(f)
+
+        dashboard_post = session.post(
+            os.path.join(grafana_url, 'api', 'dashboards', 'db'),
+            data=json.dumps({
+                'dashboard': dashboard,
+                'folderId': 0,
+                'overwrite': True
+            }),
+            headers={'content-type': 'application/json'})
+        logging.info(f"Created Grafana Dashboard")
 
     def push_metrics_2_es(self, accuracy: float, precision: float, recall: float, f1: float):
         record = {

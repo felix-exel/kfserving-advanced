@@ -10,7 +10,7 @@ DEFAULT_MODEL_NAME = 'model'
 DEFAULT_INFLUX_HOST = 'release-influxdb.default.svc.cluster.local'
 DEFAULT_INFLUX_PORT = 8086
 DEFAULT_INFLUX_DATABASE = 'metrics'
-DEFAULT_THRESHOLD = 5.
+DEFAULT_THRESHOLD = 1.9
 
 parser = argparse.ArgumentParser(parents=[kfserving.kfserver.parser])
 parser.add_argument(
